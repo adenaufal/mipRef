@@ -18,6 +18,7 @@ const {
   modelSettings,
   resetConfig,
   toggleTag,
+  randomizeCategories,
   generateFullRandom,
   saveToHistory,
   estimatedTokens
@@ -259,7 +260,7 @@ const isTagSelected = (sectionKey: string, tag: string, subsection: Record<strin
     <ModelSelector
       :model="config.model"
       :models="modelOptions"
-      @update="config.model = $event"
+      @update="(val: string) => config.model = val as 'v45-full' | 'v45-curated'"
       class="mb-4"
     />
 

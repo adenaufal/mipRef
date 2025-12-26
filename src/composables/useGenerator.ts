@@ -172,16 +172,17 @@ export function useGenerator() {
 
   // Randomize specific categories
   const randomizeCategories = (categories: string[], nsfw: boolean = false) => {
-    categories.forEach(cat => {
+    for (const cat of categories) {
       const key = cat as keyof typeof allTags
       if (allTags[key]) {
         const tagArray = config.value[key as keyof PromptConfig]
         if (Array.isArray(tagArray)) {
-          const count = Math.ceil(Math.random() * 2) // 1-2 random tags
-          (config.value as Record<string, unknown>)[key] = getRandomTags(key, count, nsfw)
+          const numTags: number = Math.ceil(Math.random() * 2) // 1-2 random tags
+          const newTags = getRandomTags(key, numTags, nsfw);
+          (config.value as Record<string, unknown>)[key] = newTags
         }
       }
-    })
+    }
   }
 
   // Full random generation
