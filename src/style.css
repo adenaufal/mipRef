@@ -157,3 +157,84 @@
     @apply text-surface-400;
   }
 }
+
+/* Desktop-specific styles */
+@media (min-width: 1024px) {
+  /* Custom thin scrollbar for desktop panels */
+  .desktop-layout ::-webkit-scrollbar {
+    @apply w-1.5;
+  }
+
+  .desktop-layout ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .desktop-layout ::-webkit-scrollbar-thumb {
+    @apply bg-surface-700 rounded-full;
+  }
+
+  .desktop-layout ::-webkit-scrollbar-thumb:hover {
+    @apply bg-surface-600;
+  }
+
+  /* Panel hover effects */
+  .desktop-layout aside:hover ::-webkit-scrollbar-thumb {
+    @apply bg-surface-600;
+  }
+
+  /* Resizable panel cursors */
+  .panel-resize-handle {
+    @apply cursor-col-resize;
+  }
+}
+
+/* Desktop panel transitions */
+.panel-slide-enter-active,
+.panel-slide-leave-active {
+  transition: all 0.3s ease;
+}
+
+.panel-slide-enter-from,
+.panel-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-100%);
+}
+
+/* Command palette backdrop */
+.command-palette-backdrop {
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Tag drag and drop */
+.tag-dragging {
+  @apply opacity-50 scale-95;
+}
+
+.tag-drop-target {
+  @apply border-chrient-gold bg-chrient-gold/10;
+}
+
+/* Focus visible for keyboard navigation */
+.tag-chip:focus-visible,
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.btn-ghost:focus-visible,
+.btn-icon:focus-visible {
+  @apply outline-none ring-2 ring-chrient-gold ring-offset-2 ring-offset-surface-900;
+}
+
+/* Selection highlight in desktop */
+@media (min-width: 1024px) {
+  ::selection {
+    @apply bg-chrient-gold/30 text-white;
+  }
+}
