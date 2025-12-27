@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useGenerator } from '@/composables/useGenerator'
 import { useClipboard } from '@/composables/useClipboard'
-import { useSettings } from '@/composables/useStorage'
+import { useSettings, useEnhancementSettings } from '@/composables/useStorage'
 import { useKeyboardShortcuts, createGeneratorShortcuts } from '@/composables/useKeyboardShortcuts'
 import { useUndoRedo } from '@/composables/useUndoRedo'
+import { usePromptEnhancer } from '@/composables/usePromptEnhancer'
 import { modelOptions, undesiredPresets, randomPresets } from '@/data/presets'
 import ModelSelector from '@/components/ModelSelector.vue'
 import TagSection from '@/components/TagSection.vue'
@@ -15,7 +16,9 @@ import TagBrowser from '@/components/TagBrowser.vue'
 import PromptBuilder from '@/components/PromptBuilder.vue'
 import LivePreview from '@/components/LivePreview.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
+import PromptEnhancerPanel from '@/components/PromptEnhancerPanel.vue'
 import type { Command } from '@/components/CommandPalette.vue'
+import type { EnhancedPrompt } from '@/types/enhancer'
 import { allTags } from '@/data/tags'
 
 const {
@@ -33,6 +36,56 @@ const {
 
 const { copyToClipboard, copyPromptWithSettings, copied } = useClipboard()
 const { settings, enableNsfw } = useSettings()
+const { enhancementSettings, updateEnhancementSettings } = useEnhancementSettings()
+
+// Prompt enhancer
+const {
+  settings: enhancerSettings,
+  enhancePrompt
+} = usePromptEnhancer()
+
+// Sync enhancement settings from storage to enhancer
+watch(enhancementSettings, (newSettings) => {
+  Object.assign(enhancerSettings.value, newSettings)
+}, { immediate: true, deep: true })
+
+// Enhanced prompt state
+const enhancedPromptData = ref<EnhancedPrompt | null>(null)
+const showEnhanced = ref(true)
+const showEnhancerPanel = ref(true)
+
+// Compute enhanced prompt when buildPrompt changes
+const computeEnhancedPrompt = () => {
+  if (buildPrompt.value) {
+    enhancedPromptData.value = enhancePrompt(buildPrompt.value, settings.value.nsfwEnabled)
+  } else {
+    enhancedPromptData.value = null
+  }
+}
+
+// Watch for prompt changes and re-enhance
+watch(buildPrompt, computeEnhancedPrompt, { immediate: true })
+watch(() => enhancerSettings.value, computeEnhancedPrompt, { deep: true })
+
+// Get the prompt to use for copying (enhanced or original based on toggle)
+const promptToUse = computed(() => {
+  if (showEnhanced.value && enhancedPromptData.value) {
+    return enhancedPromptData.value.enhanced
+  }
+  return buildPrompt.value
+})
+
+// Get enhanced undesired content
+const enhancedUndesiredContent = computed(() => {
+  let content = undesiredContent.value
+  if (enhancedPromptData.value && enhancerSettings.value.autoNegatives) {
+    const autoNegatives = enhancedPromptData.value.negatives.join(', ')
+    if (autoNegatives) {
+      content = content ? `${content}, ${autoNegatives}` : autoNegatives
+    }
+  }
+  return content
+})
 
 // Undo/Redo for config
 const { canUndo, canRedo, undo, redo } = useUndoRedo(config, { debounceMs: 500 })
@@ -89,27 +142,38 @@ const handleSurpriseMe = () => {
   }, 500)
 }
 
-// Copy handlers
+// Copy handlers - use enhanced prompt when available
 const handleCopy = async () => {
-  await copyToClipboard(buildPrompt.value)
+  await copyToClipboard(promptToUse.value)
   saveToHistory()
 }
 
 const handleCopyWithUC = async () => {
-  const text = `Prompt:\n${buildPrompt.value}\n\nUndesired Content:\n${undesiredContent.value}`
+  const text = `Prompt:\n${promptToUse.value}\n\nUndesired Content:\n${enhancedUndesiredContent.value}`
   await copyToClipboard(text)
   saveToHistory()
 }
 
 const handleCopyAll = async () => {
   await copyPromptWithSettings(
-    buildPrompt.value,
-    undesiredContent.value,
+    promptToUse.value,
+    enhancedUndesiredContent.value,
     modelSettings.value.model,
     modelSettings.value.guidance,
     modelSettings.value.steps
   )
   saveToHistory()
+}
+
+// Toggle enhanced view
+const handleToggleEnhanced = () => {
+  showEnhanced.value = !showEnhanced.value
+}
+
+// Handle enhancement settings update
+const handleEnhancementSettingsUpdate = (newSettings: typeof enhancerSettings.value) => {
+  Object.assign(enhancerSettings.value, newSettings)
+  updateEnhancementSettings(newSettings)
 }
 
 // Show preview
@@ -585,22 +649,66 @@ useKeyboardShortcuts(shortcuts)
       </div>
     </main>
 
-    <!-- Right Panel: Live Preview -->
-    <aside class="w-80 flex-shrink-0">
-      <LivePreview
-        :prompt="buildPrompt"
-        :undesired-preset="config.undesiredPreset"
-        :custom-undesired="config.customUndesired"
-        :model="modelSettings.model"
-        :guidance="modelSettings.guidance"
-        :steps="modelSettings.steps"
-        :estimated-tokens="estimatedTokens"
-        :copied="copied"
-        @copy="handleCopy"
-        @copy-with-uc="handleCopyWithUC"
-        @copy-all="handleCopyAll"
-        @update-preset="(preset) => config.undesiredPreset = preset"
-      />
+    <!-- Right Panel: Live Preview + Enhancer -->
+    <aside class="w-80 flex-shrink-0 flex flex-col overflow-hidden">
+      <!-- Enhancer Panel Toggle -->
+      <div class="flex-shrink-0 p-2 border-b border-surface-800 bg-surface-900">
+        <button
+          @click="showEnhancerPanel = !showEnhancerPanel"
+          class="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm bg-surface-800 hover:bg-surface-700 transition-colors"
+        >
+          <div class="flex items-center gap-2">
+            <span>✨</span>
+            <span class="text-surface-300">Prompt Enhancer</span>
+            <span v-if="enhancedPromptData?.changes?.length" class="text-xs text-chrient-gold">
+              ({{ enhancedPromptData.changes.length }})
+            </span>
+          </div>
+          <svg
+            :class="['w-4 h-4 text-surface-500 transition-transform', showEnhancerPanel && 'rotate-180']"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Enhancer Panel (Collapsible) -->
+      <div v-if="showEnhancerPanel" class="flex-shrink-0 max-h-[50%] overflow-y-auto">
+        <PromptEnhancerPanel
+          :settings="enhancerSettings"
+          :changes="enhancedPromptData?.changes"
+          :original-prompt="buildPrompt"
+          :enhanced-prompt="enhancedPromptData?.enhanced"
+          @update:settings="handleEnhancementSettingsUpdate"
+          @apply-enhancements="computeEnhancedPrompt"
+        />
+      </div>
+
+      <!-- Live Preview -->
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <LivePreview
+          :prompt="buildPrompt"
+          :undesired-preset="config.undesiredPreset"
+          :custom-undesired="config.customUndesired"
+          :model="modelSettings.model"
+          :guidance="modelSettings.guidance"
+          :steps="modelSettings.steps"
+          :estimated-tokens="estimatedTokens"
+          :copied="copied"
+          :token-budget="enhancedPromptData?.tokens"
+          :enhanced-prompt="enhancedPromptData?.enhanced"
+          :show-enhanced="showEnhanced"
+          :changes-count="enhancedPromptData?.changes?.length"
+          @copy="handleCopy"
+          @copy-with-uc="handleCopyWithUC"
+          @copy-all="handleCopyAll"
+          @update-preset="(preset) => config.undesiredPreset = preset"
+          @toggle-enhanced="handleToggleEnhanced"
+        />
+      </div>
     </aside>
   </div>
 
@@ -613,9 +721,26 @@ useKeyboardShortcuts(shortcuts)
         <p class="text-sm text-surface-400">Seed your imagination</p>
       </div>
       <div class="flex items-center gap-2">
-        <!-- Token counter -->
-        <div class="text-xs text-surface-500 bg-surface-800 px-2 py-1 rounded">
-          ~{{ estimatedTokens }} tokens
+        <!-- Token counter with status -->
+        <div
+          :class="[
+            'text-xs px-2 py-1 rounded flex items-center gap-1',
+            enhancedPromptData?.tokens?.status === 'optimal' ? 'bg-green-500/10 text-green-400' :
+            enhancedPromptData?.tokens?.status === 'good' ? 'bg-chrient-gold/10 text-chrient-gold' :
+            enhancedPromptData?.tokens?.status === 'warning' ? 'bg-orange-500/10 text-orange-400' :
+            enhancedPromptData?.tokens?.status === 'danger' ? 'bg-red-500/10 text-red-400' :
+            'bg-surface-800 text-surface-500'
+          ]"
+        >
+          <span v-if="enhancedPromptData?.tokens?.status === 'optimal'">🟢</span>
+          <span v-else-if="enhancedPromptData?.tokens?.status === 'good'">🟡</span>
+          <span v-else-if="enhancedPromptData?.tokens?.status === 'warning'">🟠</span>
+          <span v-else-if="enhancedPromptData?.tokens?.status === 'danger'">🔴</span>
+          ~{{ enhancedPromptData?.tokens?.count ?? estimatedTokens }}
+        </div>
+        <!-- Enhancement indicator -->
+        <div v-if="enhancedPromptData?.changes?.length" class="text-xs text-chrient-gold bg-chrient-gold/10 px-2 py-1 rounded">
+          ✨{{ enhancedPromptData.changes.length }}
         </div>
         <!-- NSFW Toggle -->
         <button
@@ -750,6 +875,80 @@ useKeyboardShortcuts(shortcuts)
       />
     </div>
 
+    <!-- Enhancement Settings (Mobile) -->
+    <div class="card mb-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="section-title">✨ Enhancements</h3>
+        <span v-if="enhancedPromptData?.changes?.length" class="text-xs text-chrient-gold">
+          {{ enhancedPromptData.changes.length }} applied
+        </span>
+      </div>
+      <div class="space-y-3">
+        <!-- Auto-Weight Toggle -->
+        <label class="flex items-center justify-between cursor-pointer">
+          <span class="text-sm text-surface-400">Auto-weight tags</span>
+          <div class="relative">
+            <input
+              type="checkbox"
+              :checked="enhancerSettings.autoWeight"
+              @change="handleEnhancementSettingsUpdate({ ...enhancerSettings, autoWeight: ($event.target as HTMLInputElement).checked })"
+              class="sr-only peer"
+            />
+            <div class="w-9 h-5 bg-surface-700 rounded-full peer peer-checked:bg-chrient-gold transition-colors"></div>
+            <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4"></div>
+          </div>
+        </label>
+        <!-- Smart Repetition Toggle -->
+        <label class="flex items-center justify-between cursor-pointer">
+          <span class="text-sm text-surface-400">Smart repetition</span>
+          <div class="relative">
+            <input
+              type="checkbox"
+              :checked="enhancerSettings.smartRepetition.level !== 'none'"
+              @change="handleEnhancementSettingsUpdate({
+                ...enhancerSettings,
+                smartRepetition: {
+                  ...enhancerSettings.smartRepetition,
+                  level: ($event.target as HTMLInputElement).checked ? 'light' : 'none'
+                }
+              })"
+              class="sr-only peer"
+            />
+            <div class="w-9 h-5 bg-surface-700 rounded-full peer peer-checked:bg-chrient-gold transition-colors"></div>
+            <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4"></div>
+          </div>
+        </label>
+        <!-- Auto-Negatives Toggle -->
+        <label class="flex items-center justify-between cursor-pointer">
+          <span class="text-sm text-surface-400">Auto-generate negatives</span>
+          <div class="relative">
+            <input
+              type="checkbox"
+              :checked="enhancerSettings.autoNegatives"
+              @change="handleEnhancementSettingsUpdate({ ...enhancerSettings, autoNegatives: ($event.target as HTMLInputElement).checked })"
+              class="sr-only peer"
+            />
+            <div class="w-9 h-5 bg-surface-700 rounded-full peer peer-checked:bg-chrient-gold transition-colors"></div>
+            <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4"></div>
+          </div>
+        </label>
+        <!-- Booru Normalization Toggle -->
+        <label class="flex items-center justify-between cursor-pointer">
+          <span class="text-sm text-surface-400">Booru tag normalization</span>
+          <div class="relative">
+            <input
+              type="checkbox"
+              :checked="enhancerSettings.booruNormalization"
+              @change="handleEnhancementSettingsUpdate({ ...enhancerSettings, booruNormalization: ($event.target as HTMLInputElement).checked })"
+              class="sr-only peer"
+            />
+            <div class="w-9 h-5 bg-surface-700 rounded-full peer peer-checked:bg-chrient-gold transition-colors"></div>
+            <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4"></div>
+          </div>
+        </label>
+      </div>
+    </div>
+
     <!-- Preview & Copy Actions -->
     <div class="sticky bottom-20 bg-surface-950/95 backdrop-blur-sm -mx-4 px-4 py-4 border-t border-surface-800">
       <div class="flex gap-2">
@@ -783,8 +982,8 @@ useKeyboardShortcuts(shortcuts)
 
   <PromptPreview
     :show="showPromptPreview"
-    :prompt="buildPrompt"
-    :undesired="undesiredContent"
+    :prompt="promptToUse"
+    :undesired="enhancedUndesiredContent"
     :model="modelSettings.model"
     :guidance="modelSettings.guidance"
     :steps="modelSettings.steps"

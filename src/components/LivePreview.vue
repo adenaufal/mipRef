@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { undesiredPresets } from '@/data/presets'
+import type { TokenBudget, TokenStatus } from '@/types/enhancer'
 
 const props = defineProps<{
   prompt: string
@@ -11,6 +12,11 @@ const props = defineProps<{
   steps: number
   estimatedTokens: number
   copied: boolean
+  // New enhancement props
+  tokenBudget?: TokenBudget
+  enhancedPrompt?: string
+  showEnhanced?: boolean
+  changesCount?: number
 }>()
 
 defineEmits<{
@@ -18,21 +24,49 @@ defineEmits<{
   (e: 'copy-with-uc'): void
   (e: 'copy-all'): void
   (e: 'update-preset', preset: string): void
+  (e: 'toggle-enhanced'): void
 }>()
 
 // Max tokens for NovelAI
 const maxTokens = 512
+const optimalTokens = 225
 
 // Token percentage
 const tokenPercentage = computed(() => {
   return Math.min((props.estimatedTokens / maxTokens) * 100, 100)
 })
 
+// Token status with emoji
+const tokenStatus = computed<{ emoji: string; status: TokenStatus; label: string }>(() => {
+  const count = props.tokenBudget?.count ?? props.estimatedTokens
+  if (count <= 150) return { emoji: '🟢', status: 'optimal', label: 'Optimal' }
+  if (count <= 225) return { emoji: '🟡', status: 'good', label: 'Good' }
+  if (count <= 350) return { emoji: '🟠', status: 'warning', label: 'Getting long' }
+  return { emoji: '🔴', status: 'danger', label: 'Too long' }
+})
+
 // Token color based on usage
 const tokenColor = computed(() => {
-  if (props.estimatedTokens > maxTokens * 0.9) return 'text-red-400'
-  if (props.estimatedTokens > maxTokens * 0.7) return 'text-yellow-400'
-  return 'text-chrient-gold'
+  const status = tokenStatus.value.status
+  switch (status) {
+    case 'optimal': return 'text-green-400'
+    case 'good': return 'text-chrient-gold'
+    case 'warning': return 'text-orange-400'
+    case 'danger': return 'text-red-400'
+    default: return 'text-chrient-gold'
+  }
+})
+
+// Token bar color
+const tokenBarColor = computed(() => {
+  const status = tokenStatus.value.status
+  switch (status) {
+    case 'optimal': return 'bg-green-400'
+    case 'good': return 'bg-chrient-gold'
+    case 'warning': return 'bg-orange-400'
+    case 'danger': return 'bg-red-400'
+    default: return 'bg-chrient-gold'
+  }
 })
 
 // Get undesired content
@@ -101,12 +135,23 @@ const warnings = computed(() => {
 // Format prompt for display (highlight special syntax)
 const formattedPrompt = computed(() => {
   if (!props.prompt) return ''
-
-  return props.prompt
-    .replace(/\{\{([^}]+)\}\}/g, '<span class="emphasis-strong">{{$1}}</span>')
-    .replace(/\{([^}]+)\}/g, '<span class="emphasis-medium">{$1}</span>')
-    .replace(/\[([^\]]+)\]/g, '<span class="emphasis-weak">[$1]</span>')
+  return formatPromptDisplay(props.prompt)
 })
+
+// Format any prompt string with syntax highlighting
+function formatPromptDisplay(prompt: string): string {
+  if (!prompt) return ''
+
+  return prompt
+    // Numerical weight syntax (e.g., 1.2::tag::)
+    .replace(/(\d+\.?\d*)::([^:]+)::/g, '<span class="emphasis-weight">$1::$2::</span>')
+    // Double braces (strong emphasis)
+    .replace(/\{\{([^}]+)\}\}/g, '<span class="emphasis-strong">{{$1}}</span>')
+    // Single braces (medium emphasis)
+    .replace(/\{([^}]+)\}/g, '<span class="emphasis-medium">{$1}</span>')
+    // Square brackets (weak/de-emphasis)
+    .replace(/\[([^\]]+)\]/g, '<span class="emphasis-weak">[$1]</span>')
+}
 </script>
 
 <template>
@@ -120,20 +165,84 @@ const formattedPrompt = computed(() => {
 
     <!-- Content -->
     <div class="flex-1 overflow-y-auto p-3 space-y-4">
-      <!-- Token Counter -->
+      <!-- Token Counter (Enhanced) -->
       <div class="card-preview">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-xs text-surface-500">Token Count</span>
-          <span :class="['text-sm font-mono font-medium', tokenColor]">
-            {{ estimatedTokens }}/{{ maxTokens }}
-          </span>
+          <span class="text-xs text-surface-500">Token Budget</span>
+          <div class="flex items-center gap-2">
+            <span class="text-lg">{{ tokenStatus.emoji }}</span>
+            <span :class="['text-sm font-mono font-medium', tokenColor]">
+              {{ tokenBudget?.count ?? estimatedTokens }}/{{ maxTokens }}
+            </span>
+          </div>
         </div>
-        <div class="h-2 bg-surface-800 rounded-full overflow-hidden">
+
+        <!-- Token bar with optimal zone indicator -->
+        <div class="relative h-3 bg-surface-800 rounded-full overflow-hidden">
+          <!-- Optimal zone marker -->
+          <div
+            class="absolute top-0 bottom-0 w-px bg-green-400/50 z-10"
+            :style="{ left: `${(optimalTokens / maxTokens) * 100}%` }"
+          />
+          <!-- Progress bar -->
           <div
             class="h-full transition-all duration-300 rounded-full"
-            :class="estimatedTokens > maxTokens * 0.9 ? 'bg-red-400' : estimatedTokens > maxTokens * 0.7 ? 'bg-yellow-400' : 'bg-chrient-gold'"
+            :class="tokenBarColor"
             :style="{ width: `${tokenPercentage}%` }"
           />
+        </div>
+
+        <!-- Status label -->
+        <div class="flex items-center justify-between mt-2">
+          <span :class="['text-xs', tokenColor]">{{ tokenStatus.label }}</span>
+          <span class="text-xs text-surface-600">Optimal: ~{{ optimalTokens }}</span>
+        </div>
+
+        <!-- Token Breakdown (if available) -->
+        <div v-if="tokenBudget?.breakdown" class="mt-3 pt-3 border-t border-surface-700/50">
+          <div class="text-xs text-surface-500 mb-2">Breakdown</div>
+          <div class="grid grid-cols-2 gap-1 text-xs">
+            <div v-if="tokenBudget.breakdown.quality > 0" class="flex justify-between">
+              <span class="text-surface-500">Quality</span>
+              <span class="text-surface-400 font-mono">{{ tokenBudget.breakdown.quality }}</span>
+            </div>
+            <div v-if="tokenBudget.breakdown.subject > 0" class="flex justify-between">
+              <span class="text-surface-500">Subject</span>
+              <span class="text-surface-400 font-mono">{{ tokenBudget.breakdown.subject }}</span>
+            </div>
+            <div v-if="tokenBudget.breakdown.features > 0" class="flex justify-between">
+              <span class="text-surface-500">Features</span>
+              <span class="text-surface-400 font-mono">{{ tokenBudget.breakdown.features }}</span>
+            </div>
+            <div v-if="tokenBudget.breakdown.details > 0" class="flex justify-between">
+              <span class="text-surface-500">Details</span>
+              <span class="text-surface-400 font-mono">{{ tokenBudget.breakdown.details }}</span>
+            </div>
+            <div v-if="tokenBudget.breakdown.scene > 0" class="flex justify-between">
+              <span class="text-surface-500">Scene</span>
+              <span class="text-surface-400 font-mono">{{ tokenBudget.breakdown.scene }}</span>
+            </div>
+            <div v-if="tokenBudget.breakdown.style > 0" class="flex justify-between">
+              <span class="text-surface-500">Style</span>
+              <span class="text-surface-400 font-mono">{{ tokenBudget.breakdown.style }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Enhancement Indicator -->
+      <div v-if="changesCount && changesCount > 0" class="card-preview bg-chrient-gold/5 border-chrient-gold/20">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="text-chrient-gold">✨</span>
+            <span class="text-xs text-chrient-gold">{{ changesCount }} enhancements applied</span>
+          </div>
+          <button
+            @click="$emit('toggle-enhanced')"
+            class="text-xs text-chrient-gold-light hover:text-chrient-gold transition-colors"
+          >
+            {{ showEnhanced ? 'View Original' : 'View Enhanced' }}
+          </button>
         </div>
       </div>
 
@@ -217,9 +326,25 @@ const formattedPrompt = computed(() => {
 
       <!-- Prompt Preview -->
       <div class="card-preview">
-        <div class="text-xs text-surface-500 mb-2">Generated Prompt</div>
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs text-surface-500">
+            {{ showEnhanced && enhancedPrompt ? 'Enhanced Prompt' : 'Generated Prompt' }}
+          </span>
+          <button
+            v-if="enhancedPrompt && enhancedPrompt !== prompt"
+            @click="$emit('toggle-enhanced')"
+            class="text-xs px-2 py-0.5 rounded bg-surface-700 text-surface-400 hover:text-chrient-gold transition-colors"
+          >
+            {{ showEnhanced ? 'Raw' : 'Enhanced' }}
+          </button>
+        </div>
         <div
-          v-if="prompt"
+          v-if="showEnhanced && enhancedPrompt"
+          class="text-sm text-surface-300 font-mono leading-relaxed break-words"
+          v-html="formatPromptDisplay(enhancedPrompt)"
+        />
+        <div
+          v-else-if="prompt"
           class="text-sm text-surface-300 font-mono leading-relaxed break-words"
           v-html="formattedPrompt"
         />
@@ -258,5 +383,9 @@ const formattedPrompt = computed(() => {
 
 .emphasis-weak {
   @apply text-surface-500;
+}
+
+.emphasis-weight {
+  @apply text-purple-400;
 }
 </style>

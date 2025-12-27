@@ -1,11 +1,14 @@
 import { ref, watch, type Ref } from 'vue'
 import type { HistoryEntry, SavedTemplate, AppSettings } from '@/types'
+import type { EnhancementSettings } from '@/types/enhancer'
 import { defaultAppSettings } from '@/types'
+import { defaultEnhancementSettings } from '@/types/enhancer'
 
 const STORAGE_KEYS = {
   history: 'mipref_history',
   templates: 'mipref_templates',
-  settings: 'mipref_settings'
+  settings: 'mipref_settings',
+  enhancementSettings: 'mipref_enhancement_settings'
 }
 
 const MAX_HISTORY_ITEMS = 100
@@ -136,5 +139,31 @@ export function useSettings() {
     resetSettings,
     enableNsfw,
     disableNsfw
+  }
+}
+
+// Enhancement settings composable
+export function useEnhancementSettings() {
+  const enhancementSettings: Ref<EnhancementSettings> = ref(
+    getFromStorage(STORAGE_KEYS.enhancementSettings, defaultEnhancementSettings)
+  )
+
+  watch(enhancementSettings, (newSettings) => {
+    setToStorage(STORAGE_KEYS.enhancementSettings, newSettings)
+  }, { deep: true })
+
+  const updateEnhancementSettings = (partial: Partial<EnhancementSettings>) => {
+    enhancementSettings.value = { ...enhancementSettings.value, ...partial }
+  }
+
+  const resetEnhancementSettings = () => {
+    enhancementSettings.value = { ...defaultEnhancementSettings }
+    setToStorage(STORAGE_KEYS.enhancementSettings, enhancementSettings.value)
+  }
+
+  return {
+    enhancementSettings,
+    updateEnhancementSettings,
+    resetEnhancementSettings
   }
 }
